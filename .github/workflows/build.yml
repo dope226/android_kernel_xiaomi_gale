@@ -56,7 +56,7 @@ jobs:
           sudo ln -sf "$NDK_BIN/llvm-nm" /usr/local/bin/llvm-nm || true
           sudo ln -sf "$NDK_BIN/llvm-objdump" /usr/local/bin/llvm-objdump || true
           sudo ln -sf "$NDK_BIN/llvm-strip" /usr/local/bin/llvm-strip || true
-          # Also provide a symlink for the API-specific driver name to be safe
+          # Provide API-specific driver names as symlinks to be safe
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang++" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang++ || true
 
