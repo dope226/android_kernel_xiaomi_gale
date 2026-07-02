@@ -1,4 +1,4 @@
-name: Build Kernel (KernelSU Next 4.19) - NDK toolchain (fixed CC + llvm links)
+name: Build Kernel (ReSukiSU 4.19) - NDK toolchain (fixed CC + llvm links)
 on:
   workflow_dispatch:
 
@@ -48,67 +48,66 @@ jobs:
           fi
           echo "$NDK_BIN" >> $GITHUB_PATH
           echo "NDK bin added to PATH: $NDK_BIN"
-          # Create symlinks for llvm tools to avoid "not found"
           sudo ln -sf "$NDK_BIN/llvm-ar" /usr/local/bin/llvm-ar || true
           sudo ln -sf "$NDK_BIN/llvm-nm" /usr/local/bin/llvm-nm || true
           sudo ln -sf "$NDK_BIN/llvm-objdump" /usr/local/bin/llvm-objdump || true
           sudo ln -sf "$NDK_BIN/llvm-strip" /usr/local/bin/llvm-strip || true
-          # Create explicit clang driver for API level
           CLANG_DRIVER="${NDK_BIN}/aarch64-linux-android${ANDROID_API_LEVEL}-clang"
           if [ -x "$CLANG_DRIVER" ]; then
             sudo ln -sf "$CLANG_DRIVER" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
           fi
-          # Show versions for debug
           "$NDK_BIN/clang" --version || true
           llvm-ar --version || true
 
-      - name: Installer KernelSU Next (si disponible)
+      - name: Intégrer ReSukiSU (dernière version)
         working-directory: kernel/source
-        run: |
-          set -e
-          if git ls-remote --exit-code https://github.com/KernelSU-Next-4.19/KernelSU-Next.git >/dev/null 2>&1; then
-            git clone --depth=1 https://github.com/KernelSU-Next-4.19/KernelSU-Next.git KernelSU
-            if [ -f ../KernelSU-Next-4.19.patch ]; then
-              cd KernelSU
-              git apply --reject --whitespace=fix ../KernelSU-Next-4.19.patch || true
-              cd ..
-            fi
-            cp -r KernelSU/* . || true
-          else
-            echo "Dépôt KernelSU-Next-4.19 introuvable. Si vous avez un patch, placez-le dans kernel/source/."
-            if [ -f KernelSU-Next-4.19.patch ]; then
-              git apply --reject --whitespace=fix KernelSU-Next-4.19.patch || true
-            fi
-          fi
+        run: curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
-      - name: Activer les flags requis pour KernelSU Next
+      - name: Activer les flags requis
         working-directory: kernel/source
         run: |
           set -e
           DEFCONFIG=arch/arm64/configs/gale_defconfig
           if [ ! -f "$DEFCONFIG" ]; then
-            echo "Fichier $DEFCONFIG introuvable. Vérifiez le chemin et le nom de la defconfig."
+            echo "Fichier $DEFCONFIG introuvable."
             exit 1
           fi
           sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KPM is not set/CONFIG_KPM=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KALLSYMS is not set/CONFIG_KALLSYMS=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KALLSYMS_ALL is not set/CONFIG_KALLSYMS_ALL=y/' "$DEFCONFIG" || true
-          grep -q '^CONFIG_KSU_NEXT=y' "$DEFCONFIG" || echo 'CONFIG_KSU_NEXT=y' >> "$DEFCONFIG"
-          grep -q '^CONFIG_KSU_NEXT_SUSFS=y' "$DEFCONFIG" || echo 'CONFIG_KSU_NEXT_SUSFS=y' >> "$DEFCONFIG"
+          grep -q '^CONFIG_KSU=y' "$DEFCONFIG" || echo 'CONFIG_KSU=y' >> "$DEFCONFIG"
+          grep -q '^CONFIG_KPM=y' "$DEFCONFIG" || echo 'CONFIG_KPM=y' >> "$DEFCONFIG"
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG" || true
           echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> "$DEFCONFIG"
           sed -i '/CONFIG_LOCALVERSION_AUTO/d' "$DEFCONFIG" || true
+          # --- Tweaks vérifiés depuis Amegakure (EricDev-cb, commit 0d828b4) ---
+          sed -i 's/^CONFIG_MTK_SCHED_TRACERS=y/CONFIG_MTK_SCHED_TRACERS=n/' "$DEFCONFIG" || true
+          sed -i 's/^# CONFIG_RD_LZ4 is not set/CONFIG_RD_LZ4=y/' "$DEFCONFIG" || true
+          sed -i 's/^CONFIG_FAULT_INJECTION=y/CONFIG_FAULT_INJECTION=n/' "$DEFCONFIG" || true
+          sed -i 's/^CONFIG_LLVM_POLLY=y/CONFIG_LLVM_POLLY=n/' "$DEFCONFIG" || true
+          sed -i 's/^CONFIG_RCU_BOOST_DELAY=500/CONFIG_RCU_BOOST_DELAY=20/' "$DEFCONFIG" || true
+          sed -i 's/^CONFIG_HZ=500/CONFIG_HZ=800/' "$DEFCONFIG" || true
+          grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4=y' "$DEFCONFIG" || echo 'CONFIG_ZRAM_DEF_COMP_LZ4=y' >> "$DEFCONFIG"
+          echo 'CONFIG_CPU_INPUT_BOOST=y' >> "$DEFCONFIG"
+          echo 'CONFIG_INPUT_BOOST_DURATION_MS=150' >> "$DEFCONFIG"
+          echo 'CONFIG_WAKE_BOOST_DURATION_MS=1000' >> "$DEFCONFIG"
+          echo 'CONFIG_INPUT_BOOST_FREQ_LP=1400000' >> "$DEFCONFIG"
+          echo 'CONFIG_INPUT_BOOST_FREQ_PERF=1800000' >> "$DEFCONFIG"
+          echo 'CONFIG_MAX_BOOST_FREQ_LP=1800000' >> "$DEFCONFIG"
+          echo 'CONFIG_MAX_BOOST_FREQ_PERF=2000000' >> "$DEFCONFIG"
+          echo 'CONFIG_MIN_FREQ_LP=850000' >> "$DEFCONFIG"
+          echo 'CONFIG_MIN_FREQ_PERF=1100000' >> "$DEFCONFIG"
+          echo 'CONFIG_IDLE_FREQ_LP=500000' >> "$DEFCONFIG"
+          echo 'CONFIG_IDLE_FREQ_PERF=850000' >> "$DEFCONFIG"
 
       - name: Configure environment variables for NDK build
         working-directory: kernel/source
         run: |
           set -e
-          # Use Android NDK toolchain and explicit clang driver for API level
           echo "ANDROID_API_LEVEL=${ANDROID_API_LEVEL}" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-android-" >> $GITHUB_ENV
-          # Fix CC to the API-specific clang driver
           echo "CC=aarch64-linux-android${ANDROID_API_LEVEL}-clang" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
           echo "HOSTCC=gcc" >> $GITHUB_ENV
@@ -127,20 +126,12 @@ jobs:
           export LD=${LD:-ld.lld}
           export HOSTCC=${HOSTCC:-gcc}
           export LLVM=1
-
           echo "Using CC: $(command -v $CC || true)"
-          echo "Listing clang-related drivers in PATH:"
           ls -1 $(dirname $(command -v $CC) 2>/dev/null)/*aarch64* || true
-
-          # Generate defconfig
           make O=out gale_defconfig 2>&1 | tee defconfig.log
-
-          # Build: pass CLANG_TRIPLE and LLVM=1
           make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc) 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
           echo "$rc" > build_rc
-
-          # Package AnyKernel3 if image exists
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             mkdir -p AnyKernel3
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
@@ -148,9 +139,7 @@ jobs:
             zip -r9 ../Kernel-MONSTERKERNEL.zip ./* || true
             cd ..
           fi
-
           echo "Compilation finished with exit code: $rc"
-          # keep step success to upload logs; final step will fail job if rc != 0
           exit 0
 
       - name: Upload build logs
@@ -183,5 +172,6 @@ jobs:
               echo "Compilation réussie."
             fi
           else
-            echo "build_rc introuvable. Impossible de déterminer le statut de compilation."
+            echo "build_rc introuvable."
             exit 1
+          fi
