@@ -26,22 +26,25 @@ jobs:
           path: kernel/source
 
       - name: Install host build dependencies
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libelf-dev dwarves zip unzip \
-            git wget ca-certificates gnupg curl unzip
+            git wget ca-certificates gnupg curl
+          # optional fallback cross tools
           sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu || true
 
       - name: Download and extract Android NDK
         working-directory: ${{ github.workspace }}
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           echo "Downloading NDK ${NDK_VERSION}..."
           wget -qO ndk.zip "${NDK_URL}"
           unzip -q ndk.zip -d toolchain
-          rm ndk.zip
+          rm -f ndk.zip
           NDK_BIN="${GITHUB_WORKSPACE}/toolchain/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           if [ ! -d "$NDK_BIN" ]; then
             echo "NDK toolchain not found at $NDK_BIN"
@@ -50,6 +53,9 @@ jobs:
           fi
           echo "$NDK_BIN" >> $GITHUB_PATH
           echo "NDK bin added to PATH: $NDK_BIN"
+
+          # Create stable symlinks so kernel build can find clang/clang++ and llvm tools
+          # Use sudo where available; ignore errors if not permitted
           sudo ln -sf "$NDK_BIN/clang" /usr/local/bin/clang || true
           sudo ln -sf "$NDK_BIN/clang++" /usr/local/bin/clang++ || true
           sudo ln -sf "$NDK_BIN/llvm-ar" /usr/local/bin/llvm-ar || true
@@ -58,17 +64,23 @@ jobs:
           sudo ln -sf "$NDK_BIN/llvm-strip" /usr/local/bin/llvm-strip || true
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang++" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang++ || true
+
+          # Quick checks (non-fatal)
           "$NDK_BIN/clang" --version || true
           llvm-ar --version || true
 
       - name: Intégrer ReSukiSU (dernière version)
         working-directory: kernel/source
-        run: curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
       - name: Activer les flags requis
         working-directory: kernel/source
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           DEFCONFIG=arch/arm64/configs/gale_defconfig
           if [ ! -f "$DEFCONFIG" ]; then
             echo "Fichier $DEFCONFIG introuvable."
@@ -86,22 +98,159 @@ jobs:
           # Les autres tweaks ReSukiSU restent intacts
 
       - name: Create temporary swap to avoid OOM
+        shell: bash
         run: |
-          set -e
-          SWAP_SIZE_BYTES=$(( ${SWAP_SIZE_GB} * 1024 * 1024 * 1024 ))
-          echo "Creating ${SWAP_SIZE_GB}G swap..."
-          sudo fallocate -l "${SWAP_SIZE_GB}G" /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=$(( ${SWAP_SIZE_GB} * 1024 )) status=none
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          echo "Swap created:"
-          free -h
+          set -euo pipefail
+          SWAP_GB=${SWAP_SIZE_GB:-4}
+          SWAPFILE=/swapfile
+
+          echo "Vérification d'un swap existant..."
+          if sudo swapon --show | awk '{print $1}' | grep -q "^${SWAPFILE}$"; then
+            echo "Un swap actif existe déjà sur $SWAPFILE — réutilisation."
+            free -h || true
+            exit 0
+          fi
+
+          # If a file exists but not mounted, remove it safely
+          if [ -e "$SWAPFILE" ]; then
+            echo "$SWAPFILE existe mais n'est pas monté. Tentative de suppression."
+            sudo swapoff "$SWAPFILE" 2>/dev/null || true
+            sudo rm -f "$SWAPFILE" || true
+          fi
+
+          echo "Création d'un fichier swap de ${SWAP_GB}G en $SWAPFILE..."
+          # Try fallocate first, fallback to dd
+          if sudo fallocate -l "${SWAP_GB}G" "$SWAPFILE" 2>/tmp/fallocate.err; then
+            echo "fallocate réussi."
+          else
+            echo "fallocate a échoué, message:"
+            sed -n '1,200p' /tmp/fallocate.err || true
+            echo "Tentative avec dd..."
+            sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=$(( SWAP_GB * 1024 )) status=none
+          fi
+
+          sudo chmod 600 "$SWAPFILE"
+          sudo mkswap "$SWAPFILE"
+          sudo swapon "$SWAPFILE"
+
+          echo "Swap activé:"
+          sudo swapon --show || true
+          free -h || true
 
       - name: Configure environment variables for NDK build
         working-directory: kernel/source
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           echo "ANDROID_API_LEVEL=${ANDROID_API_LEVEL}" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-android-" >> $GITHUB_ENV
-          echo "
+          echo "CC=aarch64-linux-android${ANDROID_API_LEVEL}-clang" >> $GITHUB_ENV
+          echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "HOSTCC=gcc" >> $GITHUB_ENV
+          echo "LLVM=1" >> $GITHUB_ENV
+          echo "MAKE_JOBS=${MAKE_JOBS}" >> $GITHUB_ENV
+
+      - name: Debug toolchain (versions and paths)
+        working-directory: kernel/source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PATH: $PATH"
+          which aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
+          aarch64-linux-android${ANDROID_API_LEVEL}-clang --version || true
+          which llvm-ar || true
+          llvm-ar --version || true
+          which ld.lld || true
+          ld.lld --version || true
+
+      - name: Compile kernel (with limited jobs, capture logs)
+        working-directory: kernel/source
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export ANDROID_API_LEVEL=${ANDROID_API_LEVEL}
+          export CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-android-}
+          export CLANG_TRIPLE=${CLANG_TRIPLE:-aarch64-linux-android-}
+          export CC=${CC:-aarch64-linux-android${ANDROID_API_LEVEL}-clang}
+          export LD=${LD:-ld.lld}
+          export HOSTCC=${HOSTCC:-gcc}
+          export LLVM=1
+          export MAKE_JOBS=${MAKE_JOBS:-1}
+
+          # Increase stack size to avoid some build crashes
+          ulimit -s unlimited || true
+
+          echo "Using CC: $(command -v $CC || true)"
+          echo "Make jobs: $MAKE_JOBS"
+          free -h || true
+
+          # Generate defconfig
+          make O=out gale_defconfig 2>&1 | tee defconfig.log
+
+          # Build with limited parallelism to reduce memory pressure
+          make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j"$MAKE_JOBS" 2>&1 | tee build.log
+          rc=${PIPESTATUS[0]}
+          echo "$rc" > build_rc
+
+          # Package AnyKernel3 if image exists
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            mkdir -p AnyKernel3
+            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
+            cd AnyKernel3
+            zip -r9 ../Kernel-MONSTERKERNEL.zip ./* || true
+            cd ..
+          fi
+
+          echo "Compilation finished with exit code: $rc"
+          # keep step success to upload logs; final step will fail job if rc != 0
+          exit 0
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build-logs
+          path: |
+            kernel/source/build.log
+            kernel/source/defconfig.log
+            kernel/source/build_rc
+
+      - name: Upload kernel zip if present
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-MONSTERKERNEL
+          path: kernel/source/Kernel-MONSTERKERNEL.zip
+
+      - name: Remove temporary swap
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sudo swapon --show | awk '{print $1}' | grep -q "^/swapfile$"; then
+            echo "Removing swap..."
+            sudo swapoff /swapfile || true
+            sudo rm -f /swapfile || true
+          else
+            echo "No temporary swap to remove."
+          fi
+
+      - name: Fail job if compilation a échoué
+        working-directory: kernel/source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f build_rc ]; then
+            rc=$(cat build_rc)
+            if [ "$rc" -ne 0 ]; then
+              echo "La compilation a échoué avec le code $rc. Voir kernel-build-logs pour le détail."
+              exit "$rc"
+            else
+              echo "Compilation réussie."
+            fi
+          else
+            echo "build_rc introuvable."
+            exit 1
