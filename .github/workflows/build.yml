@@ -1,0 +1,38 @@
+name: Build gale + ReSukiSU
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          repository: dope226/android_kernel_xiaomi_gale
+          ref: stable
+          path: kernel/source
+
+      - name: Intégrer ReSukiSU (main = dernière version)
+        working-directory: kernel/source
+        run: curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+
+      - name: Activer les flags requis
+        working-directory: kernel/source
+        run: |
+          ./scripts/config --file arch/arm64/configs/gale_defconfig \
+            -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL
+
+      - name: Build + package AnyKernel3
+        uses: dabao1955/kernel_build_action@main
+        with:
+          kernel-url: ./kernel/source/
+          config: gale_defconfig
+          arch: arm64
+          aosp-clang: true
+          anykernel3: true
+          release: true
+          access-token: ${{ secrets.GITHUB_TOKEN }}
