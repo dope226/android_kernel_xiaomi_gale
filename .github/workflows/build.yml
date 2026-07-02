@@ -26,36 +26,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libelf-dev dwarves zip unzip \
-            git wget ca-certificates \
-            clang-14 lld \
-            gcc-aarch64-linux-gnu
+            git wget ca-certificates gnupg \
+            clang-14 lld llvm-14 \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          # Ensure clang-14 exists
           if ! command -v clang-14 >/dev/null 2>&1; then
-            echo "clang-14 not found in apt; attempting to add llvm-14 repo"
-            sudo apt-get install -y gnupg
+            echo "clang-14 not available; adding llvm repo and retrying"
             wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
             sudo bash -c 'echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-14 main" > /etc/apt/sources.list.d/llvm.list'
             sudo apt-get update
-            sudo apt-get install -y clang-14 lld
+            sudo apt-get install -y clang-14 lld llvm-14
           fi
 
       - name: Installer KernelSU Next (version 4.19) si disponible
         working-directory: kernel/source
         run: |
           set -e
-          # Tenter de cloner le fork KernelSU-Next compatible 4.19 si il existe
           if git ls-remote --exit-code https://github.com/KernelSU-Next-4.19/KernelSU-Next.git >/dev/null 2>&1; then
             git clone --depth=1 https://github.com/KernelSU-Next-4.19/KernelSU-Next.git KernelSU
-            echo "KernelSU-Next cloné avec succès."
+            echo "KernelSU-Next cloné."
             if [ -f ../KernelSU-Next-4.19.patch ]; then
               cd KernelSU
               git apply --reject --whitespace=fix ../KernelSU-Next-4.19.patch || true
               cd ..
             fi
-            if [ -d KernelSU ]; then
-              cp -r KernelSU/* .
-            fi
+            cp -r KernelSU/* . || true
           else
-            echo "Dépôt KernelSU-Next-4.19 introuvable. Si vous avez un patch, placez-le dans kernel/source/ et il sera appliqué."
+            echo "Dépôt KernelSU-Next-4.19 introuvable. Si vous avez un patch, placez-le dans kernel/source/."
             if [ -f KernelSU-Next-4.19.patch ]; then
               git apply --reject --whitespace=fix KernelSU-Next-4.19.patch || true
             fi
@@ -67,18 +64,15 @@ jobs:
           set -e
           DEFCONFIG=arch/arm64/configs/gale_defconfig
           if [ ! -f "$DEFCONFIG" ]; then
-            echo "Fichier $DEFCONFIG introuvable. Vérifiez le chemin et le nom de la defconfig."
+            echo "Fichier $DEFCONFIG introuvable."
             exit 1
           fi
-
           sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KPM is not set/CONFIG_KPM=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KALLSYMS is not set/CONFIG_KALLSYMS=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KALLSYMS_ALL is not set/CONFIG_KALLSYMS_ALL=y/' "$DEFCONFIG" || true
-
           grep -q '^CONFIG_KSU_NEXT=y' "$DEFCONFIG" || echo 'CONFIG_KSU_NEXT=y' >> "$DEFCONFIG"
           grep -q '^CONFIG_KSU_NEXT_SUSFS=y' "$DEFCONFIG" || echo 'CONFIG_KSU_NEXT_SUSFS=y' >> "$DEFCONFIG"
-
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG" || true
           echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> "$DEFCONFIG"
           sed -i '/CONFIG_LOCALVERSION_AUTO/d' "$DEFCONFIG" || true
@@ -87,27 +81,40 @@ jobs:
         working-directory: kernel/source
         run: |
           set -e
+          # Variables d'environnement pour forcer Clang comme compilateur cible
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
           echo "CC=clang" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "LLVM=1" >> $GITHUB_ENV
+          # Optionnel: si vous avez une toolchain Android/NDK, ajoutez son bin au PATH ici
+          # echo "${{ github.workspace }}/toolchain/bin" >> $GITHUB_PATH
 
-      - name: Compile kernel
+      - name: Compile kernel (avec Clang)
         working-directory: kernel/source
         run: |
           set -e
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
+          export CLANG_TRIPLE=${CLANG_TRIPLE:-aarch64-linux-gnu-}
           export CC=${CC:-clang}
           export LD=${LD:-ld.lld}
+          export LLVM=1
 
-          # Créer dossier de sortie et générer la config
+          # Utiliser clang-14 explicitement si disponible
+          if command -v clang-14 >/dev/null 2>&1; then
+            export CC=clang-14
+          fi
+          if command -v ld.lld >/dev/null 2>&1; then
+            export LD=ld.lld
+          fi
+
+          # Générer la defconfig et lancer la compilation en précisant LLVM et CLANG_TRIPLE
           make O=out gale_defconfig
-
-          # Lancer la compilation (parallèle)
-          make O=out -j$(nproc)
+          make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc)
 
           # Vérifier la présence de l'image et préparer l'archive AnyKernel3
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
@@ -124,7 +131,4 @@ jobs:
           cd ..
 
       - name: Upload du Kernel compilé
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel-MONSTERKERNEL
-          path: kernel/source/Kernel-MONSTERKERNEL.zip
+        uses: actions/upload
