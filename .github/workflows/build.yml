@@ -14,8 +14,8 @@ jobs:
       NDK_VERSION: android-ndk-r25b
       NDK_URL: https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
       ANDROID_API_LEVEL: "21"
-      MAKE_JOBS: "1"            # Limite par défaut ; augmente si runner a beaucoup de RAM
-      SWAP_SIZE_GB: "4"         # Taille du swap temporaire
+      MAKE_JOBS: "1"
+      SWAP_SIZE_GB: "4"
 
     steps:
       - name: Checkout kernel source
@@ -50,8 +50,6 @@ jobs:
           fi
           echo "$NDK_BIN" >> $GITHUB_PATH
           echo "NDK bin added to PATH: $NDK_BIN"
-
-          # Create stable symlinks so kernel build can find clang/clang++ and llvm tools
           sudo ln -sf "$NDK_BIN/clang" /usr/local/bin/clang || true
           sudo ln -sf "$NDK_BIN/clang++" /usr/local/bin/clang++ || true
           sudo ln -sf "$NDK_BIN/llvm-ar" /usr/local/bin/llvm-ar || true
@@ -60,7 +58,6 @@ jobs:
           sudo ln -sf "$NDK_BIN/llvm-strip" /usr/local/bin/llvm-strip || true
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang++" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang++ || true
-
           "$NDK_BIN/clang" --version || true
           llvm-ar --version || true
 
@@ -107,75 +104,4 @@ jobs:
           echo "ANDROID_API_LEVEL=${ANDROID_API_LEVEL}" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-android-" >> $GITHUB_ENV
-          echo "CC=aarch64-linux-android${ANDROID_API_LEVEL}-clang" >> $GITHUB_ENV
-          echo "LD=ld.lld" >> $GITHUB_ENV
-          echo "HOSTCC=gcc" >> $GITHUB_ENV
-          echo "LLVM=1" >> $GITHUB_ENV
-          echo "MAKE_JOBS=${MAKE_JOBS}" >> $GITHUB_ENV
-
-      - name: Debug toolchain (versions and paths)
-        working-directory: kernel/source
-        run: |
-          set -e
-          echo "PATH: $PATH"
-          which aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
-          aarch64-linux-android${ANDROID_API_LEVEL}-clang --version || true
-          which llvm-ar || true
-          llvm-ar --version || true
-          which ld.lld || true
-          ld.lld --version || true
-
-      - name: Compile kernel (with limited jobs, capture logs)
-        working-directory: kernel/source
-        run: |
-          set -euo pipefail
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export ANDROID_API_LEVEL=${ANDROID_API_LEVEL}
-          export CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-android-}
-          export CLANG_TRIPLE=${CLANG_TRIPLE:-aarch64-linux-android-}
-          export CC=${CC:-aarch64-linux-android${ANDROID_API_LEVEL}-clang}
-          export LD=${LD:-ld.lld}
-          export HOSTCC=${HOSTCC:-gcc}
-          export LLVM=1
-          export MAKE_JOBS=${MAKE_JOBS:-1}
-
-          # Increase stack size to avoid some build crashes
-          ulimit -s unlimited || true
-
-          echo "Using CC: $(command -v $CC || true)"
-          echo "Make jobs: $MAKE_JOBS"
-          free -h || true
-
-          # Generate defconfig
-          make O=out gale_defconfig 2>&1 | tee defconfig.log
-
-          # Build with limited parallelism to reduce memory pressure
-          make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j"$MAKE_JOBS" 2>&1 | tee build.log
-          rc=${PIPESTATUS[0]}
-          echo "$rc" > build_rc
-
-          # Package AnyKernel3 if image exists
-          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            mkdir -p AnyKernel3
-            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
-            cd AnyKernel3
-            zip -r9 ../Kernel-MONSTERKERNEL.zip ./* || true
-            cd ..
-          fi
-
-          echo "Compilation finished with exit code: $rc"
-          # keep step success to upload logs; final step will fail job if rc != 0
-          exit 0
-
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-build-logs
-          path: |
-            kernel/source/build.log
-            kernel/source/defconfig.log
-            kernel/source/build_rc
-
-      - name: Upload kernel zip
+          echo "
