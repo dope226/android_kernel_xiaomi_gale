@@ -1,4 +1,4 @@
-name: Build Kernel (KernelSU Next 4.19) - NDK toolchain
+name: Build Kernel (KernelSU Next 4.19) - NDK toolchain (fixed CC + llvm links)
 on:
   workflow_dispatch:
 
@@ -13,6 +13,7 @@ jobs:
       SUBARCH: arm64
       NDK_VERSION: android-ndk-r25b
       NDK_URL: https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
+      ANDROID_API_LEVEL: "21"
 
     steps:
       - name: Checkout kernel source
@@ -28,11 +29,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libelf-dev dwarves zip unzip \
-            git wget ca-certificates gnupg curl
-          # binutils for aarch64 host cross tools (optional fallback)
+            git wget ca-certificates gnupg curl unzip
           sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu || true
 
-      - name: Download and extract Android NDK (toolchain)
+      - name: Download and extract Android NDK
         working-directory: ${{ github.workspace }}
         run: |
           set -e
@@ -40,7 +40,6 @@ jobs:
           wget -qO ndk.zip "${NDK_URL}"
           unzip -q ndk.zip -d toolchain
           rm ndk.zip
-          # Path to the NDK clang toolchain
           NDK_BIN="${GITHUB_WORKSPACE}/toolchain/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           if [ ! -d "$NDK_BIN" ]; then
             echo "NDK toolchain not found at $NDK_BIN"
@@ -49,8 +48,19 @@ jobs:
           fi
           echo "$NDK_BIN" >> $GITHUB_PATH
           echo "NDK bin added to PATH: $NDK_BIN"
-          # Optional: show clang version
-          "${NDK_BIN}/clang" --version || true
+          # Create symlinks for llvm tools to avoid "not found"
+          sudo ln -sf "$NDK_BIN/llvm-ar" /usr/local/bin/llvm-ar || true
+          sudo ln -sf "$NDK_BIN/llvm-nm" /usr/local/bin/llvm-nm || true
+          sudo ln -sf "$NDK_BIN/llvm-objdump" /usr/local/bin/llvm-objdump || true
+          sudo ln -sf "$NDK_BIN/llvm-strip" /usr/local/bin/llvm-strip || true
+          # Create explicit clang driver for API level
+          CLANG_DRIVER="${NDK_BIN}/aarch64-linux-android${ANDROID_API_LEVEL}-clang"
+          if [ -x "$CLANG_DRIVER" ]; then
+            sudo ln -sf "$CLANG_DRIVER" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
+          fi
+          # Show versions for debug
+          "$NDK_BIN/clang" --version || true
+          llvm-ar --version || true
 
       - name: Installer KernelSU Next (si disponible)
         working-directory: kernel/source
@@ -94,16 +104,15 @@ jobs:
         working-directory: kernel/source
         run: |
           set -e
-          # Use Android NDK clang toolchain
+          # Use Android NDK toolchain and explicit clang driver for API level
+          echo "ANDROID_API_LEVEL=${ANDROID_API_LEVEL}" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-android-" >> $GITHUB_ENV
-          # Use clang from NDK (clang driver will pick API level suffix automatically)
-          echo "CC=clang" >> $GITHUB_ENV
+          # Fix CC to the API-specific clang driver
+          echo "CC=aarch64-linux-android${ANDROID_API_LEVEL}-clang" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
           echo "HOSTCC=gcc" >> $GITHUB_ENV
           echo "LLVM=1" >> $GITHUB_ENV
-          # Recommended API level for kernel modules; ajuste si besoin
-          echo "ANDROID_API_LEVEL=21" >> $GITHUB_ENV
 
       - name: Compile kernel with NDK toolchain (capture logs)
         working-directory: kernel/source
@@ -111,29 +120,27 @@ jobs:
           set -euo pipefail
           export ARCH=arm64
           export SUBARCH=arm64
+          export ANDROID_API_LEVEL=${ANDROID_API_LEVEL}
           export CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-android-}
           export CLANG_TRIPLE=${CLANG_TRIPLE:-aarch64-linux-android-}
-          export CC=${CC:-clang}
+          export CC=${CC:-aarch64-linux-android${ANDROID_API_LEVEL}-clang}
           export LD=${LD:-ld.lld}
           export HOSTCC=${HOSTCC:-gcc}
           export LLVM=1
-          export ANDROID_API_LEVEL=${ANDROID_API_LEVEL:-21}
 
-          # Ensure NDK clang driver with API suffix is available (example: aarch64-linux-android21-clang)
-          # The kernel build system will call clang via CC; CLANG_TRIPLE helps locate llvm tools.
           echo "Using CC: $(command -v $CC || true)"
-          echo "Using clang driver examples:"
-          ls -1 $(dirname $(command -v $CC))/aarch64-linux-android* || true
+          echo "Listing clang-related drivers in PATH:"
+          ls -1 $(dirname $(command -v $CC) 2>/dev/null)/*aarch64* || true
 
           # Generate defconfig
           make O=out gale_defconfig 2>&1 | tee defconfig.log
 
-          # Build: pass CLANG_TRIPLE and LLVM=1; CROSS_COMPILE aarch64-linux-android- will be used for objcopy/ar names
+          # Build: pass CLANG_TRIPLE and LLVM=1
           make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc) 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
           echo "$rc" > build_rc
 
-          # If kernel image exists, package AnyKernel3
+          # Package AnyKernel3 if image exists
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             mkdir -p AnyKernel3
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
@@ -146,7 +153,7 @@ jobs:
           # keep step success to upload logs; final step will fail job if rc != 0
           exit 0
 
-      - name: Upload build logs (toujours)
+      - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
