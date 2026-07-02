@@ -48,14 +48,19 @@ jobs:
           fi
           echo "$NDK_BIN" >> $GITHUB_PATH
           echo "NDK bin added to PATH: $NDK_BIN"
+
+          # Create stable symlinks so kernel build can find clang/clang++ and llvm tools
+          sudo ln -sf "$NDK_BIN/clang" /usr/local/bin/clang || true
+          sudo ln -sf "$NDK_BIN/clang++" /usr/local/bin/clang++ || true
           sudo ln -sf "$NDK_BIN/llvm-ar" /usr/local/bin/llvm-ar || true
           sudo ln -sf "$NDK_BIN/llvm-nm" /usr/local/bin/llvm-nm || true
           sudo ln -sf "$NDK_BIN/llvm-objdump" /usr/local/bin/llvm-objdump || true
           sudo ln -sf "$NDK_BIN/llvm-strip" /usr/local/bin/llvm-strip || true
-          CLANG_DRIVER="${NDK_BIN}/aarch64-linux-android${ANDROID_API_LEVEL}-clang"
-          if [ -x "$CLANG_DRIVER" ]; then
-            sudo ln -sf "$CLANG_DRIVER" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
-          fi
+          # Also provide a symlink for the API-specific driver name to be safe
+          sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
+          sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang++" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang++ || true
+
+          # Quick checks
           "$NDK_BIN/clang" --version || true
           llvm-ar --version || true
 
@@ -106,9 +111,11 @@ jobs:
         run: |
           set -e
           echo "ANDROID_API_LEVEL=${ANDROID_API_LEVEL}" >> $GITHUB_ENV
+          # Keep CROSS_COMPILE and CLANG_TRIPLE for binutils/target triple
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-android-" >> $GITHUB_ENV
-          echo "CC=aarch64-linux-android${ANDROID_API_LEVEL}-clang" >> $GITHUB_ENV
+          # Use clang (NDK clang driver) as CC so kernel build finds it reliably
+          echo "CC=clang" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
           echo "HOSTCC=gcc" >> $GITHUB_ENV
           echo "LLVM=1" >> $GITHUB_ENV
@@ -122,16 +129,19 @@ jobs:
           export ANDROID_API_LEVEL=${ANDROID_API_LEVEL}
           export CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-android-}
           export CLANG_TRIPLE=${CLANG_TRIPLE:-aarch64-linux-android-}
-          export CC=${CC:-aarch64-linux-android${ANDROID_API_LEVEL}-clang}
+          export CC=${CC:-clang}
           export LD=${LD:-ld.lld}
           export HOSTCC=${HOSTCC:-gcc}
           export LLVM=1
           echo "Using CC: $(command -v $CC || true)"
           ls -1 $(dirname $(command -v $CC) 2>/dev/null)/*aarch64* || true
+
+          # Generate defconfig and build
           make O=out gale_defconfig 2>&1 | tee defconfig.log
           make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc) 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
           echo "$rc" > build_rc
+
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             mkdir -p AnyKernel3
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
@@ -174,4 +184,3 @@ jobs:
           else
             echo "build_rc introuvable."
             exit 1
-          fi
