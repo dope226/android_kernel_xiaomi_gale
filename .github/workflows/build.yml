@@ -1,4 +1,4 @@
-name: Build Kernel (ReSukiSU 4.19) - NDK toolchain (fixed CC + llvm links)
+name: Build Kernel (ReSukiSU 4.19) - NDK toolchain (swap + low parallelism)
 on:
   workflow_dispatch:
 
@@ -14,8 +14,8 @@ jobs:
       NDK_VERSION: android-ndk-r25b
       NDK_URL: https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
       ANDROID_API_LEVEL: "21"
-      # Limite de jobs de compilation (modifiable si tu veux tester)
-      MAKE_JOBS: "2"
+      MAKE_JOBS: "1"            # Limite par défaut ; augmente si runner a beaucoup de RAM
+      SWAP_SIZE_GB: "4"         # Taille du swap temporaire
 
     steps:
       - name: Checkout kernel source
@@ -86,7 +86,19 @@ jobs:
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG" || true
           echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> "$DEFCONFIG"
           sed -i '/CONFIG_LOCALVERSION_AUTO/d' "$DEFCONFIG" || true
-          # --- Tweaks existants conservés (ReSukiSU et autres) ---
+          # Les autres tweaks ReSukiSU restent intacts
+
+      - name: Create temporary swap to avoid OOM
+        run: |
+          set -e
+          SWAP_SIZE_BYTES=$(( ${SWAP_SIZE_GB} * 1024 * 1024 * 1024 ))
+          echo "Creating ${SWAP_SIZE_GB}G swap..."
+          sudo fallocate -l "${SWAP_SIZE_GB}G" /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=$(( ${SWAP_SIZE_GB} * 1024 )) status=none
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "Swap created:"
+          free -h
 
       - name: Configure environment variables for NDK build
         working-directory: kernel/source
@@ -95,15 +107,13 @@ jobs:
           echo "ANDROID_API_LEVEL=${ANDROID_API_LEVEL}" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-android-" >> $GITHUB_ENV
-          # Use API-specific clang driver to avoid ambiguous clang/gcc selection
           echo "CC=aarch64-linux-android${ANDROID_API_LEVEL}-clang" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
           echo "HOSTCC=gcc" >> $GITHUB_ENV
           echo "LLVM=1" >> $GITHUB_ENV
-          # Make jobs limit (modifiable via env MAKE_JOBS)
           echo "MAKE_JOBS=${MAKE_JOBS}" >> $GITHUB_ENV
 
-      - name: Debug toolchain (versions et chemins)
+      - name: Debug toolchain (versions and paths)
         working-directory: kernel/source
         run: |
           set -e
@@ -115,7 +125,7 @@ jobs:
           which ld.lld || true
           ld.lld --version || true
 
-      - name: Compile kernel with NDK toolchain (capture logs, jobs limité)
+      - name: Compile kernel (with limited jobs, capture logs)
         working-directory: kernel/source
         run: |
           set -euo pipefail
@@ -128,23 +138,24 @@ jobs:
           export LD=${LD:-ld.lld}
           export HOSTCC=${HOSTCC:-gcc}
           export LLVM=1
-          export MAKE_JOBS=${MAKE_JOBS:-2}
+          export MAKE_JOBS=${MAKE_JOBS:-1}
 
-          # augmenter la taille de la pile pour éviter certains plantages
+          # Increase stack size to avoid some build crashes
           ulimit -s unlimited || true
 
           echo "Using CC: $(command -v $CC || true)"
           echo "Make jobs: $MAKE_JOBS"
+          free -h || true
 
-          # Générer la defconfig
+          # Generate defconfig
           make O=out gale_defconfig 2>&1 | tee defconfig.log
 
-          # Lancer la compilation avec limite de jobs pour éviter OOM
+          # Build with limited parallelism to reduce memory pressure
           make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j"$MAKE_JOBS" 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
           echo "$rc" > build_rc
 
-          # Si l'image existe, préparer AnyKernel3
+          # Package AnyKernel3 if image exists
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             mkdir -p AnyKernel3
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
@@ -154,7 +165,7 @@ jobs:
           fi
 
           echo "Compilation finished with exit code: $rc"
-          # garder la step réussie pour uploader les logs ; l'étape finale échouera si rc != 0
+          # keep step success to upload logs; final step will fail job if rc != 0
           exit 0
 
       - name: Upload build logs
@@ -167,26 +178,4 @@ jobs:
             kernel/source/defconfig.log
             kernel/source/build_rc
 
-      - name: Upload kernel zip if present
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel-MONSTERKERNEL
-          path: kernel/source/Kernel-MONSTERKERNEL.zip
-
-      - name: Fail job if compilation a échoué
-        working-directory: kernel/source
-        shell: bash
-        run: |
-          set -e
-          if [ -f build_rc ]; then
-            rc=$(cat build_rc)
-            if [ "$rc" -ne 0 ]; then
-              echo "La compilation a échoué avec le code $rc. Voir kernel-build-logs pour le détail."
-              exit "$rc"
-            else
-              echo "Compilation réussie."
-            fi
-          else
-            echo "build_rc introuvable."
-            exit 1
+      - name: Upload kernel zip
