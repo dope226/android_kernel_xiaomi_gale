@@ -29,9 +29,8 @@ jobs:
             git wget ca-certificates \
             clang-14 lld \
             gcc-aarch64-linux-gnu
-          # Ensure clang-14 is available as clang if needed
           if ! command -v clang-14 >/dev/null 2>&1; then
-            echo "clang-14 not found in apt; attempting to install llvm-14 repo"
+            echo "clang-14 not found in apt; attempting to add llvm-14 repo"
             sudo apt-get install -y gnupg
             wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
             sudo bash -c 'echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-14 main" > /etc/apt/sources.list.d/llvm.list'
@@ -43,24 +42,19 @@ jobs:
         working-directory: kernel/source
         run: |
           set -e
-          # Tentative de clonage du fork KernelSU Next compatible 4.19.
-          # Si le dépôt n'existe pas, on continue sans planter (l'utilisateur devra fournir le patch dans le repo).
           if git ls-remote --exit-code https://github.com/KernelSU-Next-4.19/KernelSU-Next.git >/dev/null 2>&1; then
             git clone --depth=1 https://github.com/KernelSU-Next-4.19/KernelSU-Next.git KernelSU
             echo "KernelSU-Next cloné avec succès."
-            # Appliquer patch si présent
             if [ -f ../KernelSU-Next-4.19.patch ]; then
               cd KernelSU
               git apply --reject --whitespace=fix ../KernelSU-Next-4.19.patch || true
               cd ..
             fi
-            # Copier les fichiers (si présents) dans l'arborescence du noyau
             if [ -d KernelSU ]; then
               cp -r KernelSU/* .
             fi
           else
             echo "Dépôt KernelSU-Next-4.19 introuvable. Si vous avez un patch, placez-le dans kernel/source/ et il sera appliqué."
-            # Appliquer patch local si présent
             if [ -f KernelSU-Next-4.19.patch ]; then
               git apply --reject --whitespace=fix KernelSU-Next-4.19.patch || true
             fi
@@ -76,19 +70,16 @@ jobs:
             exit 1
           fi
 
-          # Remplacer les lignes commentées si elles existent
           sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KPM is not set/CONFIG_KPM=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KALLSYMS is not set/CONFIG_KALLSYMS=y/' "$DEFCONFIG" || true
           sed -i 's/^# CONFIG_KALLSYMS_ALL is not set/CONFIG_KALLSYMS_ALL=y/' "$DEFCONFIG" || true
 
-          # Ajouter les flags spécifiques à KernelSU Next si absents
           grep -q '^CONFIG_KSU_NEXT=y' "$DEFCONFIG" || echo 'CONFIG_KSU_NEXT=y' >> "$DEFCONFIG"
           grep -q '^CONFIG_KSU_NEXT_SUSFS=y' "$DEFCONFIG" || echo 'CONFIG_KSU_NEXT_SUSFS=y' >> "$DEFCONFIG"
-          # Définir une localversion personnalisée
+
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG" || true
           echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> "$DEFCONFIG"
-          # Supprimer l'auto localversion si présent
           sed -i '/CONFIG_LOCALVERSION_AUTO/d' "$DEFCONFIG" || true
 
       - name: Configure environment variables for build
@@ -97,7 +88,6 @@ jobs:
           set -e
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
-          # Use aarch64 cross compiler from apt package
           echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
           echo "CC=clang" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
@@ -112,12 +102,9 @@ jobs:
           export CC=${CC:-clang}
           export LD=${LD:-ld.lld}
 
-          # Créer dossier de sortie
           make O=out gale_defconfig
-          # Compilation parallèle
           make O=out -j$(nproc)
 
-          # Vérifier que l'image a été générée
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             mkdir -p AnyKernel3
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
@@ -127,7 +114,6 @@ jobs:
             exit 1
           fi
 
-          # Préparer l'archive
           cd AnyKernel3
           zip -r9 ../Kernel-MONSTERKERNEL.zip ./*
           cd ..
