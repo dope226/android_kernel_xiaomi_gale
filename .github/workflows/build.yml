@@ -33,12 +33,19 @@ jobs:
           find . -name "*.rej" -type f -delete
           find KernelSU -type f -name "*.c" -exec sed -i 's/#ifdef CONFIG_KPROBES/#if defined(CONFIG_KPROBES) \&\& 0/g' {} +
 
-      - name: Activer les flags requis (Correction finale)
+      - name: Activer les flags requis (Correction directe via sed)
         working-directory: kernel/source
         run: |
-          ./scripts/config --file arch/arm64/configs/gale_defconfig \
-            -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL -e KSU_SUSFS \
-            --set-val LOCALVERSION "\"-MONSTERKERNEL\"" -d LOCALVERSION_AUTO
+          # On active les flags directement avec sed (comme le font les vieux scripts)
+          sed -i 's/# CONFIG_KSU is not set/CONFIG_KSU=y/' arch/arm64/configs/gale_defconfig
+          sed -i 's/# CONFIG_KPM is not set/CONFIG_KPM=y/' arch/arm64/configs/gale_defconfig
+          sed -i 's/# CONFIG_KALLSYMS is not set/CONFIG_KALLSYMS=y/' arch/arm64/configs/gale_defconfig
+          sed -i 's/# CONFIG_KALLSYMS_ALL is not set/CONFIG_KALLSYMS_ALL=y/' arch/arm64/configs/gale_defconfig
+          sed -i 's/# CONFIG_KSU_SUSFS is not set/CONFIG_KSU_SUSFS=y/' arch/arm64/configs/gale_defconfig
+          
+          # On ajoute LOCALVERSION proprement (ça ne cause aucune erreur de syntaxe)
+          echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> arch/arm64/configs/gale_defconfig
+          sed -i '/CONFIG_LOCALVERSION_AUTO/d' arch/arm64/configs/gale_defconfig
 
       - name: Build + package AnyKernel3
         uses: dabao1955/kernel_build_action@main
