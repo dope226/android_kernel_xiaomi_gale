@@ -26,8 +26,8 @@ jobs:
           git clone --depth=1 -b kernel-4.19 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch .
           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
-          patch -p1 < 50_add_susfs_in_kernel-4.19.patch
-          cd KernelSU && patch -p1 < 10_enable_susfs_for_ksu.patch && cd ..
+          patch -F 3 -f -p1 < 50_add_susfs_in_kernel-4.19.patch
+          cd KernelSU && patch -F 3 -f -p1 < 10_enable_susfs_for_ksu.patch && cd ..
           find KernelSU -type f -name "*.c" -exec sed -i 's/#ifdef CONFIG_KPROBES/#if defined(CONFIG_KPROBES) \&\& 0/g' {} +
 
       - name: Activer les flags requis
@@ -36,7 +36,6 @@ jobs:
           ./scripts/config --file arch/arm64/configs/gale_defconfig \
             -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL -e KSU_SUSFS \
             --set-str LOCALVERSION "-MONSTERKERNEL" -d LOCALVERSION_AUTO
-
 
       - name: Build + package AnyKernel3
         uses: dabao1955/kernel_build_action@main
