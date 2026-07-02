@@ -69,17 +69,20 @@ jobs:
           "$NDK_BIN/clang" --version || true
           llvm-ar --version || true
 
-      - name: Intégrer KernelSU Next
+      - name: Clean and integrate KernelSU Next
         working-directory: kernel/source
         shell: bash
         run: |
           set -euo pipefail
-          # Clone KernelSU Next au lieu de ReSukiSU
-          git clone https://github.com/tiann/KernelSU.git -b next drivers/kernelsu || true
-          cd drivers/kernelsu
-          # Optionnel: checkout une version spécifique si nécessaire
-          # git checkout <commit-sha>
-          cd ../..
+          # Remove any existing kernelsu directory (ReSukiSU or previous attempts)
+          rm -rf drivers/kernelsu
+          
+          # Clone KernelSU Next branch
+          echo "Cloning KernelSU Next (branch: next)..."
+          git clone https://github.com/tiann/KernelSU.git -b next drivers/kernelsu
+          
+          echo "KernelSU Next integrated successfully"
+          ls -la drivers/kernelsu/Kbuild
 
       - name: Activer les flags requis pour KernelSU Next
         working-directory: kernel/source
