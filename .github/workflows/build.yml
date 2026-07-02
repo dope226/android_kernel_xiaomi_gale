@@ -14,6 +14,8 @@ jobs:
       NDK_VERSION: android-ndk-r25b
       NDK_URL: https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
       ANDROID_API_LEVEL: "21"
+      # Limite de jobs de compilation (modifiable si tu veux tester)
+      MAKE_JOBS: "2"
 
     steps:
       - name: Checkout kernel source
@@ -56,11 +58,9 @@ jobs:
           sudo ln -sf "$NDK_BIN/llvm-nm" /usr/local/bin/llvm-nm || true
           sudo ln -sf "$NDK_BIN/llvm-objdump" /usr/local/bin/llvm-objdump || true
           sudo ln -sf "$NDK_BIN/llvm-strip" /usr/local/bin/llvm-strip || true
-          # Provide API-specific driver names as symlinks to be safe
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
           sudo ln -sf "$NDK_BIN/aarch64-linux-android${ANDROID_API_LEVEL}-clang++" /usr/local/bin/aarch64-linux-android${ANDROID_API_LEVEL}-clang++ || true
 
-          # Quick checks
           "$NDK_BIN/clang" --version || true
           llvm-ar --version || true
 
@@ -86,69 +86,36 @@ jobs:
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG" || true
           echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> "$DEFCONFIG"
           sed -i '/CONFIG_LOCALVERSION_AUTO/d' "$DEFCONFIG" || true
-          # --- Tweaks vérifiés depuis Amegakure (EricDev-cb, commit 0d828b4) ---
-          sed -i 's/^CONFIG_MTK_SCHED_TRACERS=y/CONFIG_MTK_SCHED_TRACERS=n/' "$DEFCONFIG" || true
-          sed -i 's/^# CONFIG_RD_LZ4 is not set/CONFIG_RD_LZ4=y/' "$DEFCONFIG" || true
-          sed -i 's/^CONFIG_FAULT_INJECTION=y/CONFIG_FAULT_INJECTION=n/' "$DEFCONFIG" || true
-          sed -i 's/^CONFIG_LLVM_POLLY=y/CONFIG_LLVM_POLLY=n/' "$DEFCONFIG" || true
-          sed -i 's/^CONFIG_RCU_BOOST_DELAY=500/CONFIG_RCU_BOOST_DELAY=20/' "$DEFCONFIG" || true
-          sed -i 's/^CONFIG_HZ=500/CONFIG_HZ=800/' "$DEFCONFIG" || true
-          grep -q '^CONFIG_ZRAM_DEF_COMP_LZ4=y' "$DEFCONFIG" || echo 'CONFIG_ZRAM_DEF_COMP_LZ4=y' >> "$DEFCONFIG"
-          echo 'CONFIG_CPU_INPUT_BOOST=y' >> "$DEFCONFIG"
-          echo 'CONFIG_INPUT_BOOST_DURATION_MS=150' >> "$DEFCONFIG"
-          echo 'CONFIG_WAKE_BOOST_DURATION_MS=1000' >> "$DEFCONFIG"
-          echo 'CONFIG_INPUT_BOOST_FREQ_LP=1400000' >> "$DEFCONFIG"
-          echo 'CONFIG_INPUT_BOOST_FREQ_PERF=1800000' >> "$DEFCONFIG"
-          echo 'CONFIG_MAX_BOOST_FREQ_LP=1800000' >> "$DEFCONFIG"
-          echo 'CONFIG_MAX_BOOST_FREQ_PERF=2000000' >> "$DEFCONFIG"
-          echo 'CONFIG_MIN_FREQ_LP=850000' >> "$DEFCONFIG"
-          echo 'CONFIG_MIN_FREQ_PERF=1100000' >> "$DEFCONFIG"
-          echo 'CONFIG_IDLE_FREQ_LP=500000' >> "$DEFCONFIG"
-          echo 'CONFIG_IDLE_FREQ_PERF=850000' >> "$DEFCONFIG"
+          # --- Tweaks existants conservés (ReSukiSU et autres) ---
 
       - name: Configure environment variables for NDK build
         working-directory: kernel/source
         run: |
           set -e
           echo "ANDROID_API_LEVEL=${ANDROID_API_LEVEL}" >> $GITHUB_ENV
-          # Keep CROSS_COMPILE and CLANG_TRIPLE for binutils/target triple
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-android-" >> $GITHUB_ENV
-          # Use clang (NDK clang driver) as CC so kernel build finds it reliably
-          echo "CC=clang" >> $GITHUB_ENV
+          # Use API-specific clang driver to avoid ambiguous clang/gcc selection
+          echo "CC=aarch64-linux-android${ANDROID_API_LEVEL}-clang" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
           echo "HOSTCC=gcc" >> $GITHUB_ENV
           echo "LLVM=1" >> $GITHUB_ENV
+          # Make jobs limit (modifiable via env MAKE_JOBS)
+          echo "MAKE_JOBS=${MAKE_JOBS}" >> $GITHUB_ENV
 
-      - name: Debug toolchain (affiche versions et chemins)
+      - name: Debug toolchain (versions et chemins)
         working-directory: kernel/source
         run: |
           set -e
-          echo "=== PATH and toolchain debug ==="
           echo "PATH: $PATH"
-          echo "Which clang:"
-          which clang || true
-          echo "clang --version:"
-          clang --version || true
-          echo "Which clang++:"
-          which clang++ || true
-          echo "clang++ --version:"
-          clang++ --version || true
-          echo "Which aarch64-linux-android${ANDROID_API_LEVEL}-clang:"
           which aarch64-linux-android${ANDROID_API_LEVEL}-clang || true
-          echo "aarch64-linux-android${ANDROID_API_LEVEL}-clang --version:"
           aarch64-linux-android${ANDROID_API_LEVEL}-clang --version || true
-          echo "Which ld.lld:"
-          which ld.lld || true
-          echo "ld.lld --version:"
-          ld.lld --version || true
-          echo "Which llvm-ar:"
           which llvm-ar || true
-          echo "llvm-ar --version:"
           llvm-ar --version || true
-          echo "=== end debug ==="
+          which ld.lld || true
+          ld.lld --version || true
 
-      - name: Compile kernel with NDK toolchain (capture logs)
+      - name: Compile kernel with NDK toolchain (capture logs, jobs limité)
         working-directory: kernel/source
         run: |
           set -euo pipefail
@@ -157,19 +124,27 @@ jobs:
           export ANDROID_API_LEVEL=${ANDROID_API_LEVEL}
           export CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-android-}
           export CLANG_TRIPLE=${CLANG_TRIPLE:-aarch64-linux-android-}
-          export CC=${CC:-clang}
+          export CC=${CC:-aarch64-linux-android${ANDROID_API_LEVEL}-clang}
           export LD=${LD:-ld.lld}
           export HOSTCC=${HOSTCC:-gcc}
           export LLVM=1
-          echo "Using CC: $(command -v $CC || true)"
-          ls -1 $(dirname $(command -v $CC) 2>/dev/null)/*aarch64* || true
+          export MAKE_JOBS=${MAKE_JOBS:-2}
 
-          # Generate defconfig and build
+          # augmenter la taille de la pile pour éviter certains plantages
+          ulimit -s unlimited || true
+
+          echo "Using CC: $(command -v $CC || true)"
+          echo "Make jobs: $MAKE_JOBS"
+
+          # Générer la defconfig
           make O=out gale_defconfig 2>&1 | tee defconfig.log
-          make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc) 2>&1 | tee build.log
+
+          # Lancer la compilation avec limite de jobs pour éviter OOM
+          make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j"$MAKE_JOBS" 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
           echo "$rc" > build_rc
 
+          # Si l'image existe, préparer AnyKernel3
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             mkdir -p AnyKernel3
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
@@ -177,7 +152,9 @@ jobs:
             zip -r9 ../Kernel-MONSTERKERNEL.zip ./* || true
             cd ..
           fi
+
           echo "Compilation finished with exit code: $rc"
+          # garder la step réussie pour uploader les logs ; l'étape finale échouera si rc != 0
           exit 0
 
       - name: Upload build logs
