@@ -184,3 +184,4 @@ jobs:
           else
             echo "build_rc introuvable."
             exit 1
+          fi
