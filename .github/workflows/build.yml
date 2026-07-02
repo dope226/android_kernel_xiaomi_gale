@@ -27,23 +27,20 @@ jobs:
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch .
           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
           
-          # Applique le premier patch en forçant
           patch -F 3 -f -p1 < 50_add_susfs_in_kernel-4.19.patch || true
           
-          # Applique le deuxième patch en forçant
           cd KernelSU && patch -F 3 -f -p1 < 10_enable_susfs_for_ksu.patch || true && cd ..
           
-          # Supprime les fichiers .rej
           find . -name "*.rej" -type f -delete
           
           find KernelSU -type f -name "*.c" -exec sed -i 's/#ifdef CONFIG_KPROBES/#if defined(CONFIG_KPROBES) \&\& 0/g' {} +
 
-      - name: Activer les flags requis
+      - name: Activer les flags requis (Syntaxe corrigée)
         working-directory: kernel/source
         run: |
           ./scripts/config --file arch/arm64/configs/gale_defconfig \
             -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL -e KSU_SUSFS \
-            --set LOCALVERSION "\"-MONSTERKERNEL\"" -d LOCALVERSION_AUTO
+            --set-str LOCALVERSION '-MONSTERKERNEL' -d LOCALVERSION_AUTO
 
       - name: Build + package AnyKernel3
         uses: dabao1955/kernel_build_action@main
