@@ -103,7 +103,7 @@ jobs:
           # Générer la defconfig
           make O=out gale_defconfig 2>&1 | tee defconfig.log
 
-          # Lancer la compilation et capturer le code de sortie sans arrêter la step
+          # Lancer la compilation et capturer la sortie sans arrêter la step
           make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc) 2>&1 | tee build.log
           rc=${PIPESTATUS[0]}
           echo "$rc" > build_rc
@@ -117,7 +117,6 @@ jobs:
             cd ..
           fi
 
-          # Ne pas échouer ici : on veut uploader les logs dans l'étape suivante
           echo "Compilation finished with exit code: $rc"
           exit 0
 
@@ -153,4 +152,3 @@ jobs:
           else
             echo "build_rc introuvable. Impossible de déterminer le statut de compilation."
             exit 1
-          fi
