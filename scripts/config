@@ -227,3 +227,4 @@ while [ "$1" != "" ] ; do
 		;;
 	esac
 done
+--set-str LOCALVERSION "-MONSTERKERNEL" -d LOCALVERSION_AUTO
