@@ -199,6 +199,7 @@ jobs:
 
       - name: Fail job if compilation a échoué
         working-directory: kernel/source
+        shell: bash
         run: |
           set -e
           if [ -f build_rc ]; then
@@ -212,4 +213,3 @@ jobs:
           else
             echo "build_rc introuvable."
             exit 1
-          fi
