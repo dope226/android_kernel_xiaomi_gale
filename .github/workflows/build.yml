@@ -20,7 +20,7 @@ jobs:
         working-directory: kernel/source
         run: curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
-      - name: Intégrer SUSFS (avec correction des conflits de patch)
+      - name: Intégrer SUSFS
         working-directory: kernel/source
         run: |
           git clone --depth=1 -b kernel-4.19 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
@@ -28,19 +28,17 @@ jobs:
           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
           
           patch -F 3 -f -p1 < 50_add_susfs_in_kernel-4.19.patch || true
-          
           cd KernelSU && patch -F 3 -f -p1 < 10_enable_susfs_for_ksu.patch || true && cd ..
           
           find . -name "*.rej" -type f -delete
-          
           find KernelSU -type f -name "*.c" -exec sed -i 's/#ifdef CONFIG_KPROBES/#if defined(CONFIG_KPROBES) \&\& 0/g' {} +
 
-      - name: Activer les flags requis (Syntaxe corrigée)
+      - name: Activer les flags requis (Correction finale)
         working-directory: kernel/source
         run: |
           ./scripts/config --file arch/arm64/configs/gale_defconfig \
             -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL -e KSU_SUSFS \
-            --set-str LOCALVERSION '-MONSTERKERNEL' -d LOCALVERSION_AUTO
+            --set-val LOCALVERSION "\"-MONSTERKERNEL\"" -d LOCALVERSION_AUTO
 
       - name: Build + package AnyKernel3
         uses: dabao1955/kernel_build_action@main
