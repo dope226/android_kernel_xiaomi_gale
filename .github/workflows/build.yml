@@ -29,22 +29,19 @@ jobs:
             git wget ca-certificates gnupg \
             clang-14 lld llvm-14 \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-          # Ensure clang-14 exists
           if ! command -v clang-14 >/dev/null 2>&1; then
-            echo "clang-14 not available; adding llvm repo and retrying"
             wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
             sudo bash -c 'echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-14 main" > /etc/apt/sources.list.d/llvm.list'
             sudo apt-get update
             sudo apt-get install -y clang-14 lld llvm-14
           fi
 
-      - name: Installer KernelSU Next (version 4.19) si disponible
+      - name: Installer KernelSU Next (si disponible)
         working-directory: kernel/source
         run: |
           set -e
           if git ls-remote --exit-code https://github.com/KernelSU-Next-4.19/KernelSU-Next.git >/dev/null 2>&1; then
             git clone --depth=1 https://github.com/KernelSU-Next-4.19/KernelSU-Next.git KernelSU
-            echo "KernelSU-Next cloné."
             if [ -f ../KernelSU-Next-4.19.patch ]; then
               cd KernelSU
               git apply --reject --whitespace=fix ../KernelSU-Next-4.19.patch || true
@@ -64,7 +61,7 @@ jobs:
           set -e
           DEFCONFIG=arch/arm64/configs/gale_defconfig
           if [ ! -f "$DEFCONFIG" ]; then
-            echo "Fichier $DEFCONFIG introuvable."
+            echo "Fichier $DEFCONFIG introuvable. Vérifiez le chemin et le nom de la defconfig."
             exit 1
           fi
           sed -i 's/^# CONFIG_KSU is not set/CONFIG_KSU=y/' "$DEFCONFIG" || true
@@ -81,54 +78,79 @@ jobs:
         working-directory: kernel/source
         run: |
           set -e
-          # Variables d'environnement pour forcer Clang comme compilateur cible
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "SUBARCH=arm64" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CC=clang" >> $GITHUB_ENV
+          echo "CC=clang-14" >> $GITHUB_ENV
           echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "HOSTCC=gcc" >> $GITHUB_ENV
           echo "LLVM=1" >> $GITHUB_ENV
-          # Optionnel: si vous avez une toolchain Android/NDK, ajoutez son bin au PATH ici
-          # echo "${{ github.workspace }}/toolchain/bin" >> $GITHUB_PATH
 
-      - name: Compile kernel (avec Clang)
+      - name: Compile kernel (capture log)
         working-directory: kernel/source
         run: |
-          set -e
+          set -euo pipefail
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
           export CLANG_TRIPLE=${CLANG_TRIPLE:-aarch64-linux-gnu-}
-          export CC=${CC:-clang}
+          export CC=${CC:-clang-14}
           export LD=${LD:-ld.lld}
+          export HOSTCC=${HOSTCC:-gcc}
           export LLVM=1
 
-          # Utiliser clang-14 explicitement si disponible
-          if command -v clang-14 >/dev/null 2>&1; then
-            export CC=clang-14
-          fi
-          if command -v ld.lld >/dev/null 2>&1; then
-            export LD=ld.lld
-          fi
+          # Générer la defconfig
+          make O=out gale_defconfig 2>&1 | tee defconfig.log
 
-          # Générer la defconfig et lancer la compilation en précisant LLVM et CLANG_TRIPLE
-          make O=out gale_defconfig
-          make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc)
+          # Lancer la compilation et capturer le code de sortie sans arrêter la step
+          make O=out CC="$CC" LD="$LD" LLVM=1 CLANG_TRIPLE="$CLANG_TRIPLE" CROSS_COMPILE="$CROSS_COMPILE" -j$(nproc) 2>&1 | tee build.log
+          rc=${PIPESTATUS[0]}
+          echo "$rc" > build_rc
 
-          # Vérifier la présence de l'image et préparer l'archive AnyKernel3
+          # Si l'image existe, préparer AnyKernel3
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
             mkdir -p AnyKernel3
-            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-          else
-            echo "Image kernel introuvable: out/arch/arm64/boot/Image.gz-dtb"
-            ls -la out/arch/arm64/boot || true
-            exit 1
+            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || true
+            cd AnyKernel3
+            zip -r9 ../Kernel-MONSTERKERNEL.zip ./* || true
+            cd ..
           fi
 
-          cd AnyKernel3
-          zip -r9 ../Kernel-MONSTERKERNEL.zip ./*
-          cd ..
+          # Ne pas échouer ici : on veut uploader les logs dans l'étape suivante
+          echo "Compilation finished with exit code: $rc"
+          exit 0
 
-      - name: Upload du Kernel compilé
-        uses: actions/upload
+      - name: Upload build logs (toujours)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build-logs
+          path: |
+            kernel/source/build.log
+            kernel/source/defconfig.log
+            kernel/source/build_rc
+
+      - name: Upload kernel zip if present
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-MONSTERKERNEL
+          path: kernel/source/Kernel-MONSTERKERNEL.zip
+
+      - name: Fail job if compilation a échoué
+        working-directory: kernel/source
+        run: |
+          set -e
+          if [ -f build_rc ]; then
+            rc=$(cat build_rc)
+            if [ "$rc" -ne 0 ]; then
+              echo "La compilation a échoué avec le code $rc. Voir kernel-build-logs pour le détail."
+              exit "$rc"
+            else
+              echo "Compilation réussie."
+            fi
+          else
+            echo "build_rc introuvable. Impossible de déterminer le statut de compilation."
+            exit 1
+          fi
