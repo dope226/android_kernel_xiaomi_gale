@@ -1,4 +1,4 @@
-name: Build gale + ReSukiSU (La version ultime et fiable)
+name: Build Kernel (Méthode KernelSU Officielle)
 on:
   workflow_dispatch:
 
@@ -42,44 +42,15 @@ jobs:
           echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> arch/arm64/configs/gale_defconfig
           sed -i '/CONFIG_LOCALVERSION_AUTO/d' arch/arm64/configs/gale_defconfig
 
-      - name: Installer les dépendances système
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git ccache automake flex bison build-essential zip rsync bc
-
-      - name: Installer les compilateurs (LIENS OFFICIELS GOOGLE)
-        run: |
-          # 1. Téléchargement du GCC 4.9 (INDISPENSABLE pour votre noyau 4.19)
-          # Ce lien officiel ne changera JAMAIS.
-          wget https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android-12.0.0_r48.tar.gz
-          mkdir -p aarch64-linux-android-4.9
-          tar -xzf android-12.0.0_r48.tar.gz -C aarch64-linux-android-4.9/
-          echo "${{ github.workspace }}/aarch64-linux-android-4.9/bin" >> $GITHUB_PATH
-          
-          # 2. Installation de Clang (depuis Ubuntu, sans prise de tête)
-          sudo apt-get install -y clang-14
-          echo "/usr/lib/llvm-14/bin" >> $GITHUB_PATH
-
-      - name: Compiler le noyau
-        working-directory: kernel/source
-        run: |
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-android-
-          export CC=clang-14
-          export LD=ld.lld-14
-          
-          make O=out gale_defconfig
-          make O=out -j$(nproc --all)
-          
-          mkdir -p AnyKernel3
-          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-          cd AnyKernel3
-          zip -r9 ../Kernel-MONSTERKERNEL.zip ./*
-          cd ..
-
-      - name: Upload du Kernel compilé
-        uses: actions/upload-artifact@v4
+      # C'est la partie magique. On laisse l'outil officiel de KernelSU gérer le compilateur et le build.
+      - name: Compiler le noyau avec KernelSU Action
+        uses: KernelSU/kernel_build_action@main
         with:
-          name: Kernel-MONSTERKERNEL
-          path: kernel/source/Kernel-MONSTERKERNEL.zip
+          kernel-url: ./kernel/source
+          config: gale_defconfig
+          arch: arm64
+          aosp-clang: true
+          aosp-gcc: true
+          anykernel3: true
+          release: true
+          access-token: ${{ secrets.GITHUB_TOKEN }}
