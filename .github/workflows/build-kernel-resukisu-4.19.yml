@@ -77,14 +77,14 @@ jobs:
           # Remove any existing kernelsu directory (ReSukiSU or previous attempts)
           rm -rf drivers/kernelsu
           
-          # Clone KernelSU Next branch
-          echo "Cloning KernelSU Next (branch: next)..."
-          git clone https://github.com/tiann/KernelSU.git -b next drivers/kernelsu
+          # Clone KernelSU from main branch
+          echo "Cloning KernelSU (latest)..."
+          git clone https://github.com/tiann/KernelSU.git drivers/kernelsu
           
-          echo "KernelSU Next integrated successfully"
+          echo "KernelSU integrated successfully"
           ls -la drivers/kernelsu/Kbuild
 
-      - name: Activer les flags requis pour KernelSU Next
+      - name: Activer les flags requis pour KernelSU
         working-directory: kernel/source
         shell: bash
         run: |
