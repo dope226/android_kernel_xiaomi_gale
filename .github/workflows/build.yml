@@ -19,12 +19,13 @@ jobs:
       - name: Intégrer ReSukiSU (main = dernière version)
         working-directory: kernel/source
         run: curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
-
-      - name: Activer les flags requis
+        
+        - name: Activer les flags requis
         working-directory: kernel/source
         run: |
           ./scripts/config --file arch/arm64/configs/gale_defconfig \
-            -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL
+            -e KSU -e KPM -e KALLSYMS -e KALLSYMS_ALL -e KSU_SUSFS \
+            --set-str LOCALVERSION "-MONSTERKERNEL" -d LOCALVERSION_AUTO
 
       - name: Build + package AnyKernel3
         uses: dabao1955/kernel_build_action@main
