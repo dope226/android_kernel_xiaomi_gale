@@ -1,4 +1,4 @@
-name: Build gale + ReSukiSU (Compilation directe)
+name: Build gale + ReSukiSU (Compilation stable)
 on:
   workflow_dispatch:
 
@@ -44,35 +44,40 @@ jobs:
           echo 'CONFIG_LOCALVERSION="-MONSTERKERNEL"' >> arch/arm64/configs/gale_defconfig
           sed -i '/CONFIG_LOCALVERSION_AUTO/d' arch/arm64/configs/gale_defconfig
 
-      - name: Télécharger et configurer la chaîne de compilation (Clang)
+      - name: Télécharger et configurer la chaîne de compilation (Clang + GCC)
         run: |
-          # Mise à jour des paquets
           sudo apt-get update
           sudo apt-get install -y git ccache automake flex bison build-essential zip rsync
           
-          # Téléchargement de AOSP Clang via un lien Google fiable et rapide
+          # 1. Téléchargement de AOSP Clang
           wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r522817.tar.gz
           mkdir -p clang
           tar -xzf clang-r522817.tar.gz -C clang/
+          
+          # 2. Téléchargement du GCC pour ARM64 (INDISPENSABLE pour votre noyau 4.19)
+          git clone https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-12.1.0_r0 --depth=1
+          
+          # Ajout des deux dossiers binaires au PATH
           echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/aarch64-linux-android-4.9/bin" >> $GITHUB_PATH
 
       - name: Compiler le noyau et créer le package AnyKernel3
         working-directory: kernel/source
         run: |
-          # Export des variables de compilation
+          # Export des variables
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-android-
+          export LLVM=1 # Indique d'utiliser CLANG comme compilateur principal
           
-          # Compilation du noyau
+          # Compilation
           make O=out gale_defconfig
           make O=out -j$(nproc --all)
           
-          # Copie du résultat final (Image.gz-dtb) pour AnyKernel
+          # Préparation du package
           mkdir -p AnyKernel3
           cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
           
-          # Création du zip
           cd AnyKernel3
           zip -r9 ../Kernel-MONSTERKERNEL.zip ./*
           cd ..
