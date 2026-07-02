@@ -1,4 +1,4 @@
-name: Build gale + ReSukiSU (GCC + Clang)
+name: Build gale + ReSukiSU (La version ultime et fiable)
 on:
   workflow_dispatch:
 
@@ -47,24 +47,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git ccache automake flex bison build-essential zip rsync bc
 
-      - name: Télécharger LA BONNE chaîne de compilation (GCC 4.9 + Clang)
+      - name: Installer les compilateurs (LIENS OFFICIELS GOOGLE)
         run: |
-          # 1. On clone le GCC 4.9 manquant (C'est la pièce qui manquait sur votre image)
-          git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git -b lineage-20.0 --depth=1 aarch64-linux-android-4.9
+          # 1. Téléchargement du GCC 4.9 (INDISPENSABLE pour votre noyau 4.19)
+          # Ce lien officiel ne changera JAMAIS.
+          wget https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/android-12.0.0_r48.tar.gz
+          mkdir -p aarch64-linux-android-4.9
+          tar -xzf android-12.0.0_r48.tar.gz -C aarch64-linux-android-4.9/
           echo "${{ github.workspace }}/aarch64-linux-android-4.9/bin" >> $GITHUB_PATH
           
-          # 2. On installe un Clang simple depuis les dépôts Ubuntu (C'est suffisant pour le noyau)
+          # 2. Installation de Clang (depuis Ubuntu, sans prise de tête)
           sudo apt-get install -y clang-14
           echo "/usr/lib/llvm-14/bin" >> $GITHUB_PATH
 
-      - name: Compiler le noyau et empaqueter
+      - name: Compiler le noyau
         working-directory: kernel/source
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-android-
-          
-          # Les deux variables magiques pour un noyau 4.19 :
           export CC=clang-14
           export LD=ld.lld-14
           
